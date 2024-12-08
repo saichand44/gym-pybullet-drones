@@ -5,7 +5,28 @@ from dataclasses import dataclass, field
 import numpy as np
 
 @dataclass
-class DroneParameters:
+class PythonMsg:
+    '''
+    base class for creating types and messages in python
+    '''
+    def __setattr__(self,key,value):
+        '''
+        Overloads default atribute-setting functionality
+          to avoid creating new fields that don't already exist
+        This exists to avoid hard-to-debug errors from accidentally
+          adding new fields instead of modifying existing ones
+
+        To avoid this, use:
+        object.__setattr__(instance, key, value)
+        ONLY when absolutely necessary.
+        '''
+        if key not in self.__dataclass_fields__:
+            raise TypeError(f'Cannot add new field "{key}" to frozen class {self.__class__.__name__}')
+        else:
+            object.__setattr__(self, key, value)
+
+@dataclass
+class DroneParameters(PythonMsg):
     """
     Dataclass for drone configuration and parameters.
     """
@@ -26,15 +47,40 @@ class DroneParameters:
     downwash_coefficient_1: float = field(default=2267.18)  # Downwash coefficient 1
     downwash_coefficient_2: float = field(default=0.16)  # Downwash coefficient 2
     downwash_coefficient_3: float = field(default=-0.11)  # Downwash coefficient 3
+    dt: float = field(default=0.1) # simulation interval
+    max_rpm: float = field(default=0.0)  # maximum rpm
+    max_thrust: float = field(default=0.0)  # maximum thrust
 
-    @property
+    def initialize_from_env(self, env):
+        """
+        Initializes parameters from the given environment instance.
+        """
+        self.drone_name = env.DRONE_MODEL.value
+        self.mass = env.M
+        self.arm_length = env.L
+        self.thrust_to_weight_ratio = env.THRUST2WEIGHT_RATIO
+        self.inertia_matrix = env.J
+        self.thrust_coefficient = env.KF
+        self.torque_coefficient = env.KM
+        self.collision_height = env.COLLISION_H
+        self.collision_radius = env.COLLISION_R
+        self.collision_z_offset = env.COLLISION_Z_OFFSET
+        self.max_speed_kmh = env.MAX_SPEED_KMH
+        self.ground_effect_coefficient = env.GND_EFF_COEFF
+        self.propeller_radius = env.PROP_RADIUS
+        self.drag_coefficients = env.DRAG_COEFF
+        self.downwash_coefficient_1 = env.DW_COEFF_1
+        self.downwash_coefficient_2 = env.DW_COEFF_2
+        self.downwash_coefficient_3 = env.DW_COEFF_3
+        self.max_rpm = env.MAX_RPM  # Maximum RPM of the propeller  
+        self.max_thrust = env.MAX_THRUST  # Total maximum thrust  
+
     def get_inverse_inertia_matrix(self):
         """
         Returns the inverse of the inertia matrix.
         """
         return np.linalg.inv(self.inertia_matrix)
 
-    @property
     def get_control_effectiveness_matrix(self):
         """
         Returns the control effectiveness matrix
@@ -55,14 +101,20 @@ class DroneParameters:
                         [-r_x[0], -r_x[1], -r_x[2], -r_x[3]],
                         [self.torque_coefficient, -self.torque_coefficient, 
                         self.torque_coefficient, -self.torque_coefficient]])
+        print(f'G matrix: \n{G}')
         return G
 
-    @property
+    def get_motor_thrust_limits(self):
+        """
+        Returns the thrust limits of the motors
+        """
+        return self.max_thrust*np.ones(4) 
+    
     def get_motor_rpm_limits(self):
         """
         Returns the RPM limits of the motors
         """
-        pass
+        return self.max_rpm*np.ones(4)
     
     def print_parameters(self):
         """

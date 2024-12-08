@@ -13,6 +13,9 @@ from gym_pybullet_drones.utils.enums import DroneModel, Physics
 from gym_pybullet_drones.envs.CtrlAviary import CtrlAviary
 from gym_pybullet_drones.utils.Logger import Logger
 from gym_pybullet_drones.utils.utils import sync, str2bool
+from gym_pybullet_drones.utils.pytypes import DroneParameters
+
+from gym_pybullet_drones.control.NMPCControl import NMPCPlanner, nmpcConfig
 
 DEFAULT_DRONES = DroneModel("cf2x")
 DEFAULT_NUM_DRONES = 1
@@ -23,8 +26,8 @@ DEFAULT_PLOT = True
 DEFAULT_USER_DEBUG_GUI = False
 DEFAULT_OBSTACLES = False
 DEFAULT_SIMULATION_FREQ_HZ = 240
-DEFAULT_CONTROL_FREQ_HZ = 48
-DEFAULT_DURATION_SEC = 12
+DEFAULT_CONTROL_FREQ_HZ = 120 #48
+DEFAULT_DURATION_SEC = 1.0
 DEFAULT_OUTPUT_FOLDER = 'results'
 DEFAULT_COLAB = False
 
@@ -48,8 +51,6 @@ def run(
     INIT_XYZS = np.array([0.0, 0.0, 0.0]).reshape(1, 3)
     INIT_RPYS = np.array([0.0, 0.0, 0.0]).reshape(1, 3)
 
-    #### Initialize the trajectory #############################
-
     #### Create the environment ################################
     env = CtrlAviary(drone_model=drone,
                         num_drones=num_drones,
@@ -68,36 +69,95 @@ def run(
     #### Obtain the PyBullet Client ID from the environment ####
     PYB_CLIENT = env.getPyBulletClient()
 
-    #### Get the drone parameters ###############################
-    name = env.DRONE_MODEL.value
-    mass = env.M
-    arm_length = env.L
-    thrust_to_weight_ratio = env.THRUST2WEIGHT_RATIO
-    inertia_matrix = env.J
-    inverse_inertia_matrix = env.J_INV
-    thrust_coefficient = env.KF  #TODO
-    torque_coefficient = env.KM  #TODO
-    collision_height = env.COLLISION_H
-    collision_radius = env.COLLISION_R
-    collision_z_offset = env.COLLISION_Z_OFFSET
-    max_speed_kmh = env.MAX_SPEED_KMH
-    ground_effect_coefficient = env.GND_EFF_COEFF
-    propeller_radius = env.PROP_RADIUS
-    drag_coefficients = env.DRAG_COEFF
-    downwash_coefficient_1 = env.DW_COEFF_1
-    downwash_coefficient_2 = env.DW_COEFF_2
-    downwash_coefficient_3 = env.DW_COEFF_3
-    
     #### Initialize the logger #################################
     logger = Logger(logging_freq_hz=control_freq_hz,
                     num_drones=num_drones,
                     output_folder=output_folder,
                     colab=colab
                     )
+    
+    #### Get the drone parameters ###############################
+    drone_params = DroneParameters()
+    drone_params.initialize_from_env(env=env)
+    print(f'max rpm: {drone_params.max_rpm}')
+    print(f'max thrust: {drone_params.max_thrust}')
+
+    #### Initialize the trajectory #############################
+    p_ref = np.array([1.0, 1.0, 0.0])  # desired position
+    q_ref = np.array([1.0, 0.0, 0.0, 0.0]) # desired orientation (no rotation)
+    v_ref = np.zeros(3) 
+    w_ref = np.zeros(3)
+    t_ref = np.full(4, drone_params.mass*9.81/4)  # hover thrust: each rotor lifts 1/4 m*g
+
+    waypoints = np.hstack([p_ref, q_ref, v_ref, w_ref, t_ref])
 
     #### Initialize the controller #############################
 
+    # Custom definitions for all matrices
+    Qpk = np.diag([80.0, 80.0, 800.0])  # Higher weights on position error
+    Qxyk = np.array([60.0])  # Orientation cost (xy-plane)
+    Qzk = np.array([60.0])*0  # Orientation cost (z-axis)
+    Qvk = np.diag([1.0, 1.0, 1.0])  # Velocity cost
+    Qwk = np.diag([0.5, 0.5, 0.1])  # Angular velocity cost
+    Qtk = np.diag([3.0, 3.0, 3.0, 3.0])  # Thrust cost
+    Quk = np.diag([1.0, 1.0, 1.0, 1.0]) # Control input cost
+    Rk = np.diag([1.0, 1.0, 1.0, 1.0])*1000  # Input cost
+
+    # Create an nmpcConfig instance with custom matrices
+    config = nmpcConfig(
+        TK=40,
+        Qpk=Qpk,
+        Qxyk=Qxyk,
+        Qzk=Qzk,
+        Qvk=Qvk,
+        Qwk=Qwk,
+        Qtk=Qtk,
+        Quk=Quk,
+        Rk=Rk,
+        DTK=0.05  # Custom time step
+    )
+    nmpc_planner = NMPCPlanner(config=config,
+                               drone_params=drone_params,
+                               env=env,
+                               waypoints=waypoints)
+    nmpc_planner.mpc_prob_init()
+
+    #### Initialize variables ###################################
+    action = np.zeros((num_drones, 4))
+    START = time.time()
+
     #### Run the simulation ####################################
+    for i in range(0, int(duration_sec * env.CTRL_FREQ)):
+
+        #### Step the simulation ###################################
+        obs, reward, terminated, truncated, info = env.step(action)
+
+        # #### Compute control using NMPC ###########################
+        for j in range(num_drones):
+            current_state = obs[j]
+            print(f'current state: {current_state}')
+            optimal_u = nmpc_planner.plan(current_state) + 1e-8
+            print(f'optimal_u: {optimal_u}')
+            rpms = np.sqrt(optimal_u / drone_params.thrust_coefficient)
+            print(f'rpms before clipping: {rpms}')
+
+            if not np.isnan(rpms).any():
+                action[j, :] = rpms.reshape(1, 4)
+        
+        #### Log the simulation ####################################
+        for j in range(num_drones):
+            logger.log(drone=j,
+                       timestamp=i / env.CTRL_FREQ,
+                       state=obs[j],
+                    #    control=action[j, :]
+                       )
+
+        #### Printout ##############################################
+        env.render()
+
+        #### Sync the simulation ###################################
+        if gui:
+            sync(i, START, env.CTRL_TIMESTEP)
 
     #### Close the environment #################################
     env.close()
