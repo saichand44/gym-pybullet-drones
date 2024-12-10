@@ -11,7 +11,7 @@ In a terminal, run as:
 
 Notes
 -----
-The drones move, at different altitudes, along cicular trajectories 
+The drones move, at different altitudes, along circular trajectories 
 in the X-Y plane, around point (0, -.3).
 
 """
@@ -25,6 +25,9 @@ import random
 import numpy as np
 import pybullet as p
 import matplotlib.pyplot as plt
+
+# Import pyQuaternion for handling quaternions
+from pyquaternion import Quaternion as pyQuaternion
 
 from gym_pybullet_drones.utils.enums import DroneModel, Physics
 from gym_pybullet_drones.envs.CtrlAviary import CtrlAviary
@@ -65,37 +68,28 @@ def run(
     H = .1
     H_STEP = .05
     R = .3
-    INIT_XYZS = np.array([[R*np.cos((i/6)*2*np.pi+np.pi/2), R*np.sin((i/6)*2*np.pi+np.pi/2)-R, H+i*H_STEP] for i in range(num_drones)])
+    INIT_XYZS = np.array([[R*np.cos((i/6)*2*np.pi+np.pi/2), 
+                           R*np.sin((i/6)*2*np.pi+np.pi/2)-R, 
+                           H+i*H_STEP] for i in range(num_drones)])
     INIT_RPYS = np.array([[0, 0,  i * (np.pi/2)/num_drones] for i in range(num_drones)])
 
-    #### Initialize a circular trajectory ######################
-    PERIOD = 10
-    NUM_WP = control_freq_hz*PERIOD
-    TARGET_POS = np.zeros((NUM_WP,3))
-    for i in range(NUM_WP):
-        TARGET_POS[i, :] = R*np.cos((i/NUM_WP)*(2*np.pi)+np.pi/2)+INIT_XYZS[0, 0], R*np.sin((i/NUM_WP)*(2*np.pi)+np.pi/2)-R+INIT_XYZS[0, 1], 0
-    wp_counters = np.array([int((i*NUM_WP/6)%NUM_WP) for i in range(num_drones)])
+    #### Generate Waypoints with Positions and Orientations ######
+    PERIOD = 10  # Duration over which waypoints are defined
+    NUM_WP = control_freq_hz * PERIOD  # Number of waypoints
 
-    #### Debug trajectory ######################################
-    #### Uncomment alt. target_pos in .computeControlFromState()
-    # INIT_XYZS = np.array([[.3 * i, 0, .1] for i in range(num_drones)])
-    # INIT_RPYS = np.array([[0, 0,  i * (np.pi/3)/num_drones] for i in range(num_drones)])
-    # NUM_WP = control_freq_hz*15
-    # TARGET_POS = np.zeros((NUM_WP,3))
-    # for i in range(NUM_WP):
-    #     if i < NUM_WP/6:
-    #         TARGET_POS[i, :] = (i*6)/NUM_WP, 0, 0.5*(i*6)/NUM_WP
-    #     elif i < 2 * NUM_WP/6:
-    #         TARGET_POS[i, :] = 1 - ((i-NUM_WP/6)*6)/NUM_WP, 0, 0.5 - 0.5*((i-NUM_WP/6)*6)/NUM_WP
-    #     elif i < 3 * NUM_WP/6:
-    #         TARGET_POS[i, :] = 0, ((i-2*NUM_WP/6)*6)/NUM_WP, 0.5*((i-2*NUM_WP/6)*6)/NUM_WP
-    #     elif i < 4 * NUM_WP/6:
-    #         TARGET_POS[i, :] = 0, 1 - ((i-3*NUM_WP/6)*6)/NUM_WP, 0.5 - 0.5*((i-3*NUM_WP/6)*6)/NUM_WP
-    #     elif i < 5 * NUM_WP/6:
-    #         TARGET_POS[i, :] = ((i-4*NUM_WP/6)*6)/NUM_WP, ((i-4*NUM_WP/6)*6)/NUM_WP, 0.5*((i-4*NUM_WP/6)*6)/NUM_WP
-    #     elif i < 6 * NUM_WP/6:
-    #         TARGET_POS[i, :] = 1 - ((i-5*NUM_WP/6)*6)/NUM_WP, 1 - ((i-5*NUM_WP/6)*6)/NUM_WP, 0.5 - 0.5*((i-5*NUM_WP/6)*6)/NUM_WP
-    # wp_counters = np.array([0 for i in range(num_drones)])
+    # Define final positions and orientations for each drone
+    FINAL_P = np.array([[0.0, 0.0, 1.0] for _ in range(num_drones)])  # Example final positions
+    FINAL_Q = np.array([pyQuaternion(axis=[0, 0, 1], angle=np.pi/2) for _ in range(num_drones)])  # Example final orientations
+
+    # Initialize lists to store waypoints for each drone
+    positions = [np.linspace(INIT_XYZS[j], FINAL_P[j], NUM_WP) for j in range(num_drones)]
+    orientations = [np.array([pyQuaternion.slerp(pyQuaternion(axis=[1,0,0], angle=INIT_RPYS[j,0]),
+                                               FINAL_Q[j],
+                                               t).elements 
+                              for t in np.linspace(0, 1, NUM_WP)]) for j in range(num_drones)]
+    
+    # Initialize waypoint counters for each drone
+    wp_counters = np.array([0 for _ in range(num_drones)])
 
     #### Create the environment ################################
     env = CtrlAviary(drone_model=drone,
@@ -131,32 +125,59 @@ def run(
     START = time.time()
     for i in range(0, int(duration_sec*env.CTRL_FREQ)):
 
-        #### Make it rain rubber ducks #############################
-        # if i/env.SIM_FREQ>5 and i%10==0 and i/env.SIM_FREQ<10: p.loadURDF("duck_vhacd.urdf", [0+random.gauss(0, 0.3),-0.5+random.gauss(0, 0.3),3], p.getQuaternionFromEuler([random.randint(0,360),random.randint(0,360),random.randint(0,360)]), physicsClientId=PYB_CLIENT)
+        # #### Make it rain rubber ducks #############################
+        # if i/env.SIM_FREQ > 5 and i%10 == 0 and i/env.SIM_FREQ < 10:
+        #     p.loadURDF("duck_vhacd.urdf", 
+        #               [0 + random.gauss(0, 0.3),
+        #                -0.5 + random.gauss(0, 0.3),
+        #                3],
+        #               p.getQuaternionFromEuler([random.uniform(0, 2*np.pi),
+        #                                        random.uniform(0, 2*np.pi),
+        #                                        random.uniform(0, 2*np.pi)]),
+        #               physicsClientId=PYB_CLIENT)
 
         #### Step the simulation ###################################
         obs, reward, terminated, truncated, info = env.step(action)
 
         #### Compute control for the current way point #############
         for j in range(num_drones):
-            action[j, :], _, _ = ctrl[j].computeControlFromState(control_timestep=env.CTRL_TIMESTEP,
-                                                                    state=obs[j],
-                                                                    target_pos=np.hstack([TARGET_POS[wp_counters[j], 0:2], INIT_XYZS[j, 2]]),
-                                                                    # target_pos=INIT_XYZS[j, :] + TARGET_POS[wp_counters[j], :],
-                                                                    target_rpy=INIT_RPYS[j, :]
-                                                                    )
+            if wp_counters[j] < NUM_WP:
+                # Extract target position from waypoints
+                target_pos = positions[j][wp_counters[j]]
+                
+                # Extract target orientation from waypoints and convert to RPY
+                target_quat = orientations[j][wp_counters[j]]
+                target_rpy = pyQuaternion(target_quat).yaw_pitch_roll  # Returns (yaw, pitch, roll)
+                target_rpy = np.array(target_rpy[::-1])  # Convert to (roll, pitch, yaw)
+            else:
+                # If all waypoints are exhausted, maintain the final waypoint
+                target_pos = FINAL_P[j]
+                target_rpy = np.array([0, 0, 0])  # Adjust as needed
 
-        #### Go to the next way point and loop #####################
+            # Compute control action using PID controller
+            action[j, :], _, _ = ctrl[j].computeControlFromState(
+                                        control_timestep=env.CTRL_TIMESTEP,
+                                        state=obs[j],
+                                        target_pos=target_pos,
+                                        target_rpy=target_rpy
+                                    )
+            action[j, 3] *= 0.5
+
+        #### Go to the next way point #####################
         for j in range(num_drones):
-            wp_counters[j] = wp_counters[j] + 1 if wp_counters[j] < (NUM_WP-1) else 0
+            if wp_counters[j] < NUM_WP -1:
+                wp_counters[j] += 1  # Move to the next waypoint
 
         #### Log the simulation ####################################
         for j in range(num_drones):
             logger.log(drone=j,
                        timestamp=i/env.CTRL_FREQ,
                        state=obs[j],
-                       control=np.hstack([TARGET_POS[wp_counters[j], 0:2], INIT_XYZS[j, 2], INIT_RPYS[j, :], np.zeros(6)])
-                       # control=np.hstack([INIT_XYZS[j, :]+TARGET_POS[wp_counters[j], :], INIT_RPYS[j, :], np.zeros(6)])
+                       control=np.hstack([
+                           positions[j][wp_counters[j]],
+                           pyQuaternion(orientations[j][wp_counters[j]]).yaw_pitch_roll,
+                           np.zeros(6)  # Placeholder for additional control variables if needed
+                       ])
                        )
 
         #### Printout ##############################################
@@ -181,7 +202,7 @@ if __name__ == "__main__":
     #### Define and parse (optional) arguments for the script ##
     parser = argparse.ArgumentParser(description='Helix flight script using CtrlAviary and DSLPIDControl')
     parser.add_argument('--drone',              default=DEFAULT_DRONES,     type=DroneModel,    help='Drone model (default: CF2X)', metavar='', choices=DroneModel)
-    parser.add_argument('--num_drones',         default=DEFAULT_NUM_DRONES,          type=int,           help='Number of drones (default: 3)', metavar='')
+    parser.add_argument('--num_drones',         default=DEFAULT_NUM_DRONES,          type=int,           help='Number of drones (default: 1)', metavar='')
     parser.add_argument('--physics',            default=DEFAULT_PHYSICS,      type=Physics,       help='Physics updates (default: PYB)', metavar='', choices=Physics)
     parser.add_argument('--gui',                default=DEFAULT_GUI,       type=str2bool,      help='Whether to use PyBullet GUI (default: True)', metavar='')
     parser.add_argument('--record_video',       default=DEFAULT_RECORD_VISION,      type=str2bool,      help='Whether to record a video (default: False)', metavar='')
@@ -190,7 +211,7 @@ if __name__ == "__main__":
     parser.add_argument('--obstacles',          default=DEFAULT_OBSTACLES,       type=str2bool,      help='Whether to add obstacles to the environment (default: True)', metavar='')
     parser.add_argument('--simulation_freq_hz', default=DEFAULT_SIMULATION_FREQ_HZ,        type=int,           help='Simulation frequency in Hz (default: 240)', metavar='')
     parser.add_argument('--control_freq_hz',    default=DEFAULT_CONTROL_FREQ_HZ,         type=int,           help='Control frequency in Hz (default: 48)', metavar='')
-    parser.add_argument('--duration_sec',       default=DEFAULT_DURATION_SEC,         type=int,           help='Duration of the simulation in seconds (default: 5)', metavar='')
+    parser.add_argument('--duration_sec',       default=DEFAULT_DURATION_SEC,         type=int,           help='Duration of the simulation in seconds (default: 12)', metavar='')
     parser.add_argument('--output_folder',     default=DEFAULT_OUTPUT_FOLDER, type=str,           help='Folder where to save logs (default: "results")', metavar='')
     parser.add_argument('--colab',              default=DEFAULT_COLAB, type=bool,           help='Whether example is being run by a notebook (default: "False")', metavar='')
     ARGS = parser.parse_args()

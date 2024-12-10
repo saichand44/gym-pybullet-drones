@@ -17,6 +17,8 @@ from gym_pybullet_drones.utils.pytypes import DroneParameters
 
 from gym_pybullet_drones.control.NMPCControl import NMPCPlanner, nmpcConfig
 
+from pyquaternion import Quaternion as pyQuaternion
+
 DEFAULT_DRONES = DroneModel("cf2x")
 DEFAULT_NUM_DRONES = 1
 DEFAULT_PHYSICS = Physics("pyb")
@@ -27,7 +29,7 @@ DEFAULT_USER_DEBUG_GUI = False
 DEFAULT_OBSTACLES = False
 DEFAULT_SIMULATION_FREQ_HZ = 240
 DEFAULT_CONTROL_FREQ_HZ = 120 #48
-DEFAULT_DURATION_SEC = 1.0
+DEFAULT_DURATION_SEC = 0.5
 DEFAULT_OUTPUT_FOLDER = 'results'
 DEFAULT_COLAB = False
 
@@ -48,14 +50,14 @@ def run(
         ):
     
     #### Initialize the simulation #############################
-    INIT_XYZS = np.array([0.0, 0.0, 0.0]).reshape(1, 3)
-    INIT_RPYS = np.array([0.0, 0.0, 0.0]).reshape(1, 3)
+    # INIT_XYZS = np.array([0.0, 0.0, 0.0]).reshape(1, 3)
+    # INIT_RPYS = np.array([0.0, 0.0, 0.0]).reshape(1, 3)
 
     #### Create the environment ################################
     env = CtrlAviary(drone_model=drone,
                         num_drones=num_drones,
-                        initial_xyzs=INIT_XYZS,
-                        initial_rpys=INIT_RPYS,
+                        # initial_xyzs=INIT_XYZS,
+                        # initial_rpys=INIT_RPYS,
                         physics=physics,
                         neighbourhood_radius=10,
                         pyb_freq=simulation_freq_hz,
@@ -83,20 +85,45 @@ def run(
     print(f'max thrust: {drone_params.max_thrust}')
 
     #### Initialize the trajectory #############################
-    p_ref = np.array([1.0, 1.0, 0.0])  # desired position
-    q_ref = np.array([1.0, 0.0, 0.0, 0.0]) # desired orientation (no rotation)
-    v_ref = np.zeros(3) 
-    w_ref = np.zeros(3)
-    t_ref = np.full(4, drone_params.mass*9.81/4)  # hover thrust: each rotor lifts 1/4 m*g
+    NUM_WAYPOINTS = 100
 
-    waypoints = np.hstack([p_ref, q_ref, v_ref, w_ref, t_ref])
+    initial_state = env._getDroneStateVector(0)
+    INIT_P = initial_state[0:3]
+    INIT_Q = pyQuaternion(initial_state[3:7])
+    INIT_V = initial_state[10:13]
+    INIT_W = initial_state[13:16]
+    # INIT_T = drone_params.thrust_coefficient * initial_state[16:]**2
+    INIT_T = np.zeros(4)
 
+    FINAL_P = np.array([0.0, 0.0, 1.0])
+    FINAL_Q = pyQuaternion(np.array([1.0, 0.0, 0.0, 0.0]))
+    FINAL_V = np.zeros(3)
+    FINAL_W = np.zeros(3)
+    FINAL_T = np.full(4, drone_params.mass*9.81/4)
+
+    t_values = np.linspace(0, 1, NUM_WAYPOINTS)
+    
+    positions = np.linspace(INIT_P, FINAL_P, NUM_WAYPOINTS)
+    orientations = np.array([pyQuaternion.slerp(INIT_Q, FINAL_Q, t).elements for t in t_values])
+    velocities = np.linspace(INIT_V, FINAL_V, NUM_WAYPOINTS)
+    angular_velocities = np.linspace(INIT_W, FINAL_W, NUM_WAYPOINTS)
+    thrusts = np.linspace(INIT_T, FINAL_T, NUM_WAYPOINTS)
+
+    # print(f'positions: \n{positions}')
+    # print(f'orientations: \n{orientations}')
+    # print(f'velocities: \n{velocities}')
+    # print(f'angular_velocities: \n{angular_velocities}')
+    # print(f'thrusts: \n{thrusts}')
+
+    waypoints = np.hstack([positions, orientations, velocities, angular_velocities, thrusts])
+    # print(f'waypoints: \n{waypoints}')
+    # print(f'waypoints shape: \n{waypoints.shape}')
     #### Initialize the controller #############################
 
     # Custom definitions for all matrices
     Qpk = np.diag([80.0, 80.0, 800.0])  # Higher weights on position error
     Qxyk = np.array([60.0])  # Orientation cost (xy-plane)
-    Qzk = np.array([60.0])*0  # Orientation cost (z-axis)
+    Qzk = np.array([60.0]) # Orientation cost (z-axis)
     Qvk = np.diag([1.0, 1.0, 1.0])  # Velocity cost
     Qwk = np.diag([0.5, 0.5, 0.1])  # Angular velocity cost
     Qtk = np.diag([3.0, 3.0, 3.0, 3.0])  # Thrust cost
@@ -127,6 +154,7 @@ def run(
     START = time.time()
 
     #### Run the simulation ####################################
+    trigger_time = int(0.15 * env.CTRL_FREQ)
     for i in range(0, int(duration_sec * env.CTRL_FREQ)):
 
         #### Step the simulation ###################################
@@ -137,13 +165,16 @@ def run(
             current_state = obs[j]
             print(f'current state: {current_state}')
             optimal_u = nmpc_planner.plan(current_state) + 1e-8
-            print(f'optimal_u: {optimal_u}')
             rpms = np.sqrt(optimal_u / drone_params.thrust_coefficient)
             print(f'rpms before clipping: {rpms}')
 
             if not np.isnan(rpms).any():
+                # action[j, :] = np.array([rpms[3], rpms[1], rpms[2], rpms[0]]).reshape(1, 4)
                 action[j, :] = rpms.reshape(1, 4)
-        
+
+            # if (i == trigger_time):
+            #     drone_params.G[3, 1] *= 0.0
+
         #### Log the simulation ####################################
         for j in range(num_drones):
             logger.log(drone=j,

@@ -50,6 +50,7 @@ class DroneParameters(PythonMsg):
     dt: float = field(default=0.1) # simulation interval
     max_rpm: float = field(default=0.0)  # maximum rpm
     max_thrust: float = field(default=0.0)  # maximum thrust
+    G: np.ndarray = field(default_factory=lambda: np.eye(4))  # G
 
     def initialize_from_env(self, env):
         """
@@ -74,6 +75,7 @@ class DroneParameters(PythonMsg):
         self.downwash_coefficient_3 = env.DW_COEFF_3
         self.max_rpm = env.MAX_RPM  # Maximum RPM of the propeller  
         self.max_thrust = env.MAX_THRUST  # Total maximum thrust  
+        self.G = self.get_control_effectiveness_matrix()
 
     def get_inverse_inertia_matrix(self):
         """
@@ -86,7 +88,8 @@ class DroneParameters(PythonMsg):
         Returns the control effectiveness matrix
         """
         if (self.drone_name == "cf2x"):
-            angles = np.array([np.pi/4, 3*np.pi/4, 5*np.pi/4, 7*np.pi/4])
+            # angles = np.array([np.pi/4, 3*np.pi/4, 5*np.pi/4, 7*np.pi/4])
+            angles = np.array([7*np.pi/4, 3*np.pi/4, 5*np.pi/4, np.pi/4])
         elif (self.drone_name == "cf2p"):
             angles = np.array([0.0, np.pi/2, np.pi, 3*np.pi/2])
         else:
@@ -99,10 +102,17 @@ class DroneParameters(PythonMsg):
         G = np.array([[1, 1, 1, 1],
                         [r_y[0], r_y[1], r_y[2], r_y[3]],
                         [-r_x[0], -r_x[1], -r_x[2], -r_x[3]],
-                        [self.torque_coefficient, -self.torque_coefficient, 
-                        self.torque_coefficient, -self.torque_coefficient]])
+                        [self.torque_coefficient, 
+                         -self.torque_coefficient, 
+                         self.torque_coefficient,
+                         -self.torque_coefficient]])
+        _G = np.vstack([G[:, 2], G[:, 0], G[:, -1], G[:, 1]])
+        _G = _G.T
+        # _G[3, 1] *= 0.2
         print(f'G matrix: \n{G}')
-        return G
+        print(f'_G matrix: \n{_G}')
+        # return G
+        return _G
 
     def get_motor_thrust_limits(self):
         """

@@ -51,7 +51,7 @@ class NMPCPlanner:
         self.drone_params = drone_params
         self.env = env
         self.waypoints = waypoints
-        self.last_state = None
+        self.first_run = True
 
     def _get_curr_state(self):
         """
@@ -73,10 +73,15 @@ class NMPCPlanner:
         if waypoints.ndim == 1:
             return waypoints
         elif waypoints.ndim == 2:
+            curr_position = current_state[:3]
+            curr_heading = current_state[10:13]
             for _, wp in enumerate(waypoints):
-                distance = np.linalg.norm(wp[:3] - current_state[:3])
+                vector_to_wp = wp[:3] - curr_position
+                distance = np.linalg.norm(vector_to_wp)
                 if distance > lookahead_distance:
-                    return wp
+                    dot_product = np.dot(curr_heading, vector_to_wp)
+                    if dot_product > 0:
+                        return wp
             return waypoints[-1]
         else:
             raise ValueError("Waypoints array must be either 1D (single waypoint) \
@@ -122,6 +127,8 @@ class NMPCPlanner:
         w = ca.SX.sym('w', 3)  # Angular velocity in body frame
         t = ca.SX.sym('t', 4)  # Rotor thrusts
 
+        last_w = ca.SX.sym('w', 3)
+
         z = ca.vertcat(p, q, v, w, t)
         n_states = z.numel()
 
@@ -131,6 +138,7 @@ class NMPCPlanner:
 
         # matrix containing all states over all time steps +1 (each column is a state vector)
         Z = ca.SX.sym('Z', n_states, self.config.TK + 1)
+        W = ca.SX.sym('W', 3, self.config.TK)
 
         # matrix containing all control actions over all time steps (each column is an action vector)
         U = ca.SX.sym('U', n_controls, self.config.TK)
@@ -167,27 +175,18 @@ class NMPCPlanner:
         v_dot = R_rot @ ca.vertcat(0, 0, T) - ca.vertcat(0, 0, 9.81)
 
         # Rotational dynamics
-        # curr_state = self._get_curr_state()
-        # wf = ca.SX(curr_state[13:16])
-        # tf = self.drone_params.thrust_coefficient * (ca.SX(curr_state[16:])**2)
-        # G = ca.SX(self.drone_params.get_control_effectiveness_matrix())
-        # _, tauf = self._get_Gt(G, tf)
-        # T, tau = self._get_Gt(G, t)
-
-        # if (self.last_state is None):
-        #     wf_dot = wf / self.drone_params.dt
-        # else:
-        #     last_wf = ca.SX(self.last_state[13:16])
-        #     wf_dot = (wf - last_wf) / self.drone_params.dt
-        # self.last_state = curr_state
-
-        # I = ca.SX(self.drone_params.inertia_matrix)
-        # w_dot = ca.inv(I) @ (I@wf_dot + tau - tauf)
-
-        G = ca.SX(self.drone_params.get_control_effectiveness_matrix())
+        G = ca.SX(self.drone_params.G)
         I = ca.SX(self.drone_params.inertia_matrix)
+
+        _, tauf = self._get_Gt(G, u)
         _, tau = self._get_Gt(G, t)
-        w_dot = ca.inv(I) @ (tau - ca.cross(w, I @ w))
+        wf_dot = (w - last_w) / self.config.DTK
+        w_dot = ca.inv(I) @ (I@wf_dot + tau - tauf)
+
+        # G = ca.SX(self.drone_params.get_control_effectiveness_matrix())
+        # I = ca.SX(self.drone_params.inertia_matrix)
+        # _, tau = self._get_Gt(G, t)
+        # w_dot = ca.inv(I) @ (tau - ca.cross(w, I @ w))
 
         # Quaternion dynamics   
         quat_w = Quaternion(scalar=ca.SX(0), vec=w)
@@ -199,7 +198,7 @@ class NMPCPlanner:
         z_dot = ca.vertcat(p_dot, q_dot, v_dot, w_dot, t_dot)
 
         # maps states, controls to dynamics
-        f = ca.Function('f', [z, u], [z_dot])
+        f = ca.Function('f', [z, u, last_w], [z_dot])
 
         # -------------------------------------------
         # Build the NMPC problem
@@ -210,18 +209,20 @@ class NMPCPlanner:
         # runge kutta
         for k in range(self.config.TK):
             state = Z[:, k]
+            state[3:7] = state[3:7] / ca.norm_2(state[3:7])
             control = U[:, k]
             ref_state = P[:, k]
+            last_w = state[10:13]
             cost_state = self.get_cost_vector(state=state, ref_state=ref_state, control=control)
             cost_fn = cost_fn \
                 + (cost_state).T @ Q @ (cost_state) \
                 + (control- ref_state[13:]).T @ R @ (control - ref_state[13:])
             
             next_state = Z[:, k+1]
-            k1 = f(state, control)
-            k2 = f(state + self.config.DTK * (k1/2), control)
-            k3 = f(state + self.config.DTK * (k2/2), control)
-            k4 = f(state + self.config.DTK * k3, control)
+            k1 = f(state, control, last_w)
+            k2 = f(state + self.config.DTK * (k1/2), control, last_w)
+            k3 = f(state + self.config.DTK * (k2/2), control, last_w)
+            k4 = f(state + self.config.DTK * k3, control, last_w)
             next_state_RK4 = state + (self.config.DTK / 6) * (k1 + 2 * k2 + 2 * k3 + k4)
             g = ca.vertcat(g, next_state - next_state_RK4)
 
@@ -248,7 +249,7 @@ class NMPCPlanner:
         ipopt_opts = {
             'ipopt': {
                 'print_level': 3,
-                'max_iter': 2000,
+                'max_iter': 5000,
                 'acceptable_tol': 1e-8,
                 'acceptable_obj_change_tol': 1e-6,
                 'warm_start_init_point': 'yes',
@@ -334,12 +335,29 @@ class NMPCPlanner:
         """
         """
         v = current_state[10:13]  # velocity
-        v_mag = np.linalg.norm(v)
-        v_lookahead = max(v_mag, 0.1)  # Avoid zero lookahead
+        w = current_state[13:16]
+        G = self.drone_params.G
+        I = self.drone_params.inertia_matrix
 
-        lookahead_distance = v_lookahead * (self.config.TK * self.config.DTK)
+        lookahead_distance = 0.1
         goal_state = self._get_current_waypoint(lookahead_distance, current_state)
         print(f'goal_state: {goal_state}')
         optimal_u = self.mpc_prob_solve(goal_state, current_state)
+        print(f'optimal_u: {optimal_u}')
 
-        return optimal_u
+        # INDI
+        if (self.first_run):
+            self.last_w = np.zeros(3)
+            self.first_run = False
+
+        Td, td = self._get_Gt(G, optimal_u)
+        _, tauf = self._get_Gt(G, self.drone_params.thrust_coefficient*current_state[16:]**2)
+        w_dotf = (w - self.last_w) / self.config.DTK
+        taud = tauf + I @ (np.linalg.inv(I)@(td - np.cross(w, I @ w)) - w_dotf)
+        self.last_w = w
+
+        print(f'T shape: \n{np.array([Td]).shape}')
+        print(f'taud shape: \n{taud.shape}')
+        ud = np.linalg.pinv(G) @ np.vstack([Td.reshape(-1, 1), taud.reshape(-1, 1)])
+        print(f'ud: \n{ud}')
+        return ud
