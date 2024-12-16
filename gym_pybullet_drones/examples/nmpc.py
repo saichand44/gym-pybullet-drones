@@ -29,7 +29,7 @@ DEFAULT_USER_DEBUG_GUI = False
 DEFAULT_OBSTACLES = False
 DEFAULT_SIMULATION_FREQ_HZ = 240
 DEFAULT_CONTROL_FREQ_HZ = 120 #48
-DEFAULT_DURATION_SEC = 0.5
+DEFAULT_DURATION_SEC = 1.0#0.5
 DEFAULT_OUTPUT_FOLDER = 'results'
 DEFAULT_COLAB = False
 
@@ -50,8 +50,21 @@ def run(
         ):
     
     #### Initialize the simulation #############################
-    # INIT_XYZS = np.array([0.0, 0.0, 0.0]).reshape(1, 3)
-    # INIT_RPYS = np.array([0.0, 0.0, 0.0]).reshape(1, 3)
+    INIT_XYZS = np.array([0.0, 0.0, 0.0]).reshape(1, 3)
+    INIT_RPYS = np.array([0.0, 0.0, 0.0]).reshape(1, 3)
+
+    # Define colors for drones
+    colors = [
+        [1, 0, 0],  # Red
+        [0, 1, 0],  # Green
+        [0, 0, 1],  # Blue
+        [1, 1, 0],  # Yellow
+        [1, 0, 1],  # Magenta
+        [0, 1, 1],  # Cyan
+    ]
+
+    # Initialize waypoint counters for each drone
+    wp_counters = np.array([0 for _ in range(num_drones)])
 
     #### Create the environment ################################
     env = CtrlAviary(drone_model=drone,
@@ -85,7 +98,7 @@ def run(
     print(f'max thrust: {drone_params.max_thrust}')
 
     #### Initialize the trajectory #############################
-    NUM_WAYPOINTS = 100
+    NUM_WAYPOINTS = 50
 
     initial_state = env._getDroneStateVector(0)
     INIT_P = initial_state[0:3]
@@ -99,7 +112,7 @@ def run(
     FINAL_Q = pyQuaternion(np.array([1.0, 0.0, 0.0, 0.0]))
     FINAL_V = np.zeros(3)
     FINAL_W = np.zeros(3)
-    FINAL_T = np.full(4, drone_params.mass*9.81/4)
+    FINAL_T = np.full(4, drone_params.mass*env.G/4)
 
     t_values = np.linspace(0, 1, NUM_WAYPOINTS)
     
@@ -118,17 +131,34 @@ def run(
     waypoints = np.hstack([positions, orientations, velocities, angular_velocities, thrusts])
     # print(f'waypoints: \n{waypoints}')
     # print(f'waypoints shape: \n{waypoints.shape}')
+
+    # Optionally, visualize waypoints at the start
+    print(f'positions shape: \n{positions.shape}')
+    waypoint_radius = 2e-3  # Adjust size as needed
+    for j in range(num_drones):
+        for wp in positions:
+            waypoint_visual = p.createVisualShape(
+                shapeType=p.GEOM_SPHERE,
+                radius=waypoint_radius,
+                rgbaColor=colors[j % len(colors)] + [1]
+            )
+            _ = p.createMultiBody(
+                baseMass=0,
+                baseVisualShapeIndex=waypoint_visual,
+                basePosition=wp
+            )
+
     #### Initialize the controller #############################
 
     # Custom definitions for all matrices
-    Qpk = np.diag([80.0, 80.0, 800.0])  # Higher weights on position error
+    Qpk = np.diag([80.0, 80.0, 800.0]) # Higher weights on position error
     Qxyk = np.array([60.0])  # Orientation cost (xy-plane)
     Qzk = np.array([60.0]) # Orientation cost (z-axis)
     Qvk = np.diag([1.0, 1.0, 1.0])  # Velocity cost
     Qwk = np.diag([0.5, 0.5, 0.1])  # Angular velocity cost
     Qtk = np.diag([3.0, 3.0, 3.0, 3.0])  # Thrust cost
     Quk = np.diag([1.0, 1.0, 1.0, 1.0]) # Control input cost
-    Rk = np.diag([1.0, 1.0, 1.0, 1.0])*1000  # Input cost
+    Rk = np.diag([1.0, 1.0, 1.0, 1.0])  # Input cost
 
     # Create an nmpcConfig instance with custom matrices
     config = nmpcConfig(
@@ -162,18 +192,27 @@ def run(
 
         # #### Compute control using NMPC ###########################
         for j in range(num_drones):
+            if wp_counters[j] < NUM_WAYPOINTS:
+                goal_state = waypoints[wp_counters[j]]
+            else:
+                goal_state = waypoints[-1]
+
             current_state = obs[j]
             print(f'current state: {current_state}')
-            optimal_u = nmpc_planner.plan(current_state) + 1e-8
+            optimal_u = abs(nmpc_planner.plan(goal_state, current_state))
             rpms = np.sqrt(optimal_u / drone_params.thrust_coefficient)
             print(f'rpms before clipping: {rpms}')
 
             if not np.isnan(rpms).any():
-                # action[j, :] = np.array([rpms[3], rpms[1], rpms[2], rpms[0]]).reshape(1, 4)
                 action[j, :] = rpms.reshape(1, 4)
 
             # if (i == trigger_time):
             #     drone_params.G[3, 1] *= 0.0
+
+        #### Go to the next way point #####################
+        for j in range(num_drones):
+            if wp_counters[j] < NUM_WAYPOINTS -1:
+                wp_counters[j] += 1  # Move to the next waypoint
 
         #### Log the simulation ####################################
         for j in range(num_drones):

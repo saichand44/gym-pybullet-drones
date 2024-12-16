@@ -51,7 +51,8 @@ class DroneParameters(PythonMsg):
     max_rpm: float = field(default=0.0)  # maximum rpm
     max_thrust: float = field(default=0.0)  # maximum thrust
     G: np.ndarray = field(default_factory=lambda: np.eye(4))  # G
-
+    en_rot: np.ndarray = field(default_factory=lambda: np.array([1, 1, 1, 1]))
+    
     def initialize_from_env(self, env):
         """
         Initializes parameters from the given environment instance.
@@ -88,7 +89,6 @@ class DroneParameters(PythonMsg):
         Returns the control effectiveness matrix
         """
         if (self.drone_name == "cf2x"):
-            # angles = np.array([np.pi/4, 3*np.pi/4, 5*np.pi/4, 7*np.pi/4])
             angles = np.array([7*np.pi/4, 3*np.pi/4, 5*np.pi/4, np.pi/4])
         elif (self.drone_name == "cf2p"):
             angles = np.array([0.0, np.pi/2, np.pi, 3*np.pi/2])
@@ -98,21 +98,16 @@ class DroneParameters(PythonMsg):
         r = np.array([[self.arm_length*np.cos(theta), self.arm_length*np.sin(theta)] for theta in angles])
         r_x = r[:, 0]  # x-coordinates
         r_y = r[:, 1]  # y-coordinates
-
+    
         G = np.array([[1, 1, 1, 1],
                         [r_y[0], r_y[1], r_y[2], r_y[3]],
                         [-r_x[0], -r_x[1], -r_x[2], -r_x[3]],
-                        [self.torque_coefficient, 
+                        [-self.torque_coefficient, 
                          -self.torque_coefficient, 
                          self.torque_coefficient,
-                         -self.torque_coefficient]])
-        _G = np.vstack([G[:, 2], G[:, 0], G[:, -1], G[:, 1]])
-        _G = _G.T
-        # _G[3, 1] *= 0.2
+                         self.torque_coefficient]])
         print(f'G matrix: \n{G}')
-        print(f'_G matrix: \n{_G}')
-        # return G
-        return _G
+        return G
 
     def get_motor_thrust_limits(self):
         """

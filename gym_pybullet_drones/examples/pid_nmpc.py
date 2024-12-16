@@ -45,7 +45,7 @@ DEFAULT_USER_DEBUG_GUI = False
 DEFAULT_OBSTACLES = True
 DEFAULT_SIMULATION_FREQ_HZ = 240
 DEFAULT_CONTROL_FREQ_HZ = 48
-DEFAULT_DURATION_SEC = 12
+DEFAULT_DURATION_SEC = 15
 DEFAULT_OUTPUT_FOLDER = 'results'
 DEFAULT_COLAB = False
 
@@ -68,22 +68,39 @@ def run(
     H = .1
     H_STEP = .05
     R = .3
-    INIT_XYZS = np.array([[R*np.cos((i/6)*2*np.pi+np.pi/2), 
-                           R*np.sin((i/6)*2*np.pi+np.pi/2)-R, 
-                           H+i*H_STEP] for i in range(num_drones)])
+    # INIT_XYZS = np.array([[R*np.cos((i/6)*2*np.pi+np.pi/2), 
+    #                        R*np.sin((i/6)*2*np.pi+np.pi/2)-R, 
+    #                        H+i*H_STEP] for i in range(num_drones)])
+    INIT_XYZS = np.array([[0, 0, 0] for i in range(num_drones)])
+    print(f'INIT_XYZS: \n{INIT_XYZS}')
+    print(f'INIT_XYZS shape: \n{INIT_XYZS.shape}')
     INIT_RPYS = np.array([[0, 0,  i * (np.pi/2)/num_drones] for i in range(num_drones)])
+    INIT_Q = np.array([pyQuaternion(axis=[0, 0, 1], angle=INIT_RPYS[j, 2]) * 
+                    pyQuaternion(axis=[0, 1, 0], angle=INIT_RPYS[j, 1]) * 
+                    pyQuaternion(axis=[1, 0, 0], angle=INIT_RPYS[j, 0]) 
+                    for j in range(num_drones)])
+
+    # Define colors for drones
+    colors = [
+        [1, 0, 0],  # Red
+        [0, 1, 0],  # Green
+        [0, 0, 1],  # Blue
+        [1, 1, 0],  # Yellow
+        [1, 0, 1],  # Magenta
+        [0, 1, 1],  # Cyan
+    ]
 
     #### Generate Waypoints with Positions and Orientations ######
     PERIOD = 10  # Duration over which waypoints are defined
     NUM_WP = control_freq_hz * PERIOD  # Number of waypoints
 
     # Define final positions and orientations for each drone
-    FINAL_P = np.array([[0.0, 0.0, 1.0] for _ in range(num_drones)])  # Example final positions
+    FINAL_P = np.array([[1.0, 1.0, 1.0] for _ in range(num_drones)])  # Example final positions
     FINAL_Q = np.array([pyQuaternion(axis=[0, 0, 1], angle=np.pi/2) for _ in range(num_drones)])  # Example final orientations
 
     # Initialize lists to store waypoints for each drone
     positions = [np.linspace(INIT_XYZS[j], FINAL_P[j], NUM_WP) for j in range(num_drones)]
-    orientations = [np.array([pyQuaternion.slerp(pyQuaternion(axis=[1,0,0], angle=INIT_RPYS[j,0]),
+    orientations = [np.array([pyQuaternion.slerp(INIT_Q[j],
                                                FINAL_Q[j],
                                                t).elements 
                               for t in np.linspace(0, 1, NUM_WP)]) for j in range(num_drones)]
@@ -108,6 +125,22 @@ def run(
 
     #### Obtain the PyBullet Client ID from the environment ####
     PYB_CLIENT = env.getPyBulletClient()
+
+    # Optionally, visualize waypoints at the start
+    print(f'positions: \n{positions}')
+    waypoint_radius = 2e-3  # Adjust size as needed
+    for j in range(num_drones):
+        for wp in positions[j]:
+            waypoint_visual = p.createVisualShape(
+                shapeType=p.GEOM_SPHERE,
+                radius=waypoint_radius,
+                rgbaColor=colors[j % len(colors)] + [1]
+            )
+            _ = p.createMultiBody(
+                baseMass=0,
+                baseVisualShapeIndex=waypoint_visual,
+                basePosition=wp
+            )
 
     #### Initialize the logger #################################
     logger = Logger(logging_freq_hz=control_freq_hz,
@@ -161,7 +194,6 @@ def run(
                                         target_pos=target_pos,
                                         target_rpy=target_rpy
                                     )
-            action[j, 3] *= 0.5
 
         #### Go to the next way point #####################
         for j in range(num_drones):
