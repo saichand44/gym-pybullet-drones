@@ -9,7 +9,7 @@ from gym_pybullet_drones.utils.pytypes import DroneParameters
 class nmpcConfig:
     NXK: int = 17  # length of state vector: z = [p, q, v, w, t]
     NU: int = 4  # length of input vector: u = = [t1, t2, t3, t4]
-    TK: int = 20  # finite time horizon length
+    TK: int = 100  # finite time horizon length
 
     Rk: list = field(
         default_factory=lambda: np.diag([0.5, 0.5, 0.5, 0.5])
@@ -67,25 +67,47 @@ class NMPCPlanner:
         tau = Gt[1:]
         return T, tau
 
+    # def _get_current_waypoint(self, lookahead_distance, current_state):
+    #     waypoints = np.array(self.waypoints)
+
+    #     if waypoints.ndim == 1:
+    #         return waypoints
+    #     elif waypoints.ndim == 2:
+    #         curr_position = current_state[:3]
+    #         curr_heading = current_state[10:13]
+    #         for _, wp in enumerate(waypoints):
+    #             vector_to_wp = wp[:3] - curr_position
+    #             distance = np.linalg.norm(vector_to_wp)
+    #             if distance > lookahead_distance:
+    #                 dot_product = np.dot(curr_heading, vector_to_wp)
+    #                 if dot_product > 0:
+    #                     return wp
+    #         return waypoints[-1]
+    #     else:
+    #         raise ValueError("Waypoints array must be either 1D (single waypoint) \
+    #                          or 2D (multiple waypoints).")
+
     def _get_current_waypoint(self, lookahead_distance, current_state):
         waypoints = np.array(self.waypoints)
 
-        if waypoints.ndim == 1:
-            return waypoints
-        elif waypoints.ndim == 2:
-            curr_position = current_state[:3]
-            curr_heading = current_state[10:13]
-            for _, wp in enumerate(waypoints):
-                vector_to_wp = wp[:3] - curr_position
-                distance = np.linalg.norm(vector_to_wp)
-                if distance > lookahead_distance:
-                    dot_product = np.dot(curr_heading, vector_to_wp)
-                    if dot_product > 0:
-                        return wp
-            return waypoints[-1]
-        else:
-            raise ValueError("Waypoints array must be either 1D (single waypoint) \
-                             or 2D (multiple waypoints).")
+        if len(waypoints) == 1:
+            return waypoints[0]
+
+        closest_index = 0
+        min_dist = float('inf')
+        curr_position = current_state[:3]
+        for i, wp in enumerate(waypoints):
+            d = np.linalg.norm(wp[:3] - curr_position)
+            if d < min_dist:
+                min_dist = d
+                closest_index = i
+
+        for i in range(closest_index, len(waypoints)):
+            d = np.linalg.norm(waypoints[i][:3] - curr_position)
+            if d >= lookahead_distance:
+                return waypoints[i]
+        
+        return waypoints[-1]
 
     def _swap_coordinate(self, vec_4d, inv = False):
         if not inv:
@@ -184,14 +206,17 @@ class NMPCPlanner:
         p_dot = v
         v_dot = (1/self.drone_params.mass) * R_rot @ ca.vertcat(0, 0, T) - ca.vertcat(0, 0, 9.81)
 
-        # # Rotational dynamics
-        # G = ca.SX(self.drone_params.G)
-        # I = ca.SX(self.drone_params.inertia_matrix)
+        # Rotational dynamics
+        G = ca.SX(self.drone_params.G)
+        I = ca.SX(self.drone_params.inertia_matrix)
 
         # _, tauf = self._get_Gt(G, u)
         # _, tau = self._get_Gt(G, t)
         # wf_dot = (w - last_w) / self.config.DTK
         # w_dot = ca.inv(I) @ (I@wf_dot + tau - tauf)
+
+        _, tau = self._get_Gt(G, t)
+        w_dot = ca.inv(I) @ (tau - ca.cross(w, I @ w))
 
         # Quaternion dynamics   
         quat_w = Quaternion(scalar=ca.SX(0), vec=w)
@@ -200,8 +225,7 @@ class NMPCPlanner:
         # Actuator dynamics
         t_dot = (u - t) / self.config.DTK
 
-        # q_dot = ca.DM.zeros(4, 1)
-        w_dot = ca.DM.zeros(3, 1)
+        # w_dot = ca.DM.zeros(3, 1)
         z_dot = ca.vertcat(p_dot, q_dot, v_dot, w_dot, t_dot)
 
         # maps states, controls to dynamics
@@ -347,51 +371,7 @@ class NMPCPlanner:
         # Return the first control action
         return self.ot
 
-    # def plan(self, current_state):
-    #     """
-    #     """
-    #     v = current_state[10:13]  # velocity
-    #     w = current_state[13:16]
-    #     G = self.drone_params.G
-    #     I = self.drone_params.inertia_matrix
-
-    #     distance = np.linalg.norm(self.waypoints[0, :3] - self.waypoints[-1, :3])
-    #     lookahead_distance = distance / len(self.waypoints)        
-    #     print(f'lookahead_distance: {lookahead_distance}')
-
-    #     goal_state = self._get_current_waypoint(lookahead_distance, current_state)
-    #     print(f'goal_state: {goal_state}')
-    #     optimal_u = self.mpc_prob_solve(goal_state, current_state)
-    #     print(f'optimal_u: {optimal_u}')
-
-    #     # INDI
-    #     if (self.first_run):
-    #         self.last_w = np.zeros(3)
-    #         self.first_run = False
-
-    #     Td, td = self._get_Gt(G, optimal_u)
-    #     # print(f'Td: \n{Td}')
-    #     # print(f'td: \n{td}')
-    #     # current_u = self._swap_coordinate(self.drone_params.thrust_coefficient*current_state[16:]**2)
-    #     # print(f'current_u: \n{current_u}')
-    #     # _, tauf = self._get_Gt(G, current_u)
-    #     # print(f'tauf: \n{tauf}')
-    #     # w_dotf = (w - self.last_w) / self.config.DTK
-    #     # print(f'w: \n{w}')
-    #     # print(f'last_w: \n{self.last_w}')
-    #     # print(f'w_dotf: \n{w_dotf}')
-    #     # taud = tauf + I @ (np.linalg.inv(I)@(td - np.cross(w, I @ w)) - w_dotf)
-    #     # self.last_w = w
-    #     # print(f'taud: \n{taud}')
-    #     # print(f'T shape: \n{np.array([Td]).shape}')
-    #     # print(f'taud shape: \n{taud.shape}')
-    #     # print(f'Td,taud stack: \n{np.vstack([Td.reshape(-1, 1), taud.reshape(-1, 1)])}')
-    #     # ud = self._swap_coordinate(np.linalg.pinv(G) @ np.vstack([Td.reshape(-1, 1), taud.reshape(-1, 1)]), inv=True)
-    #     ud = self._swap_coordinate(np.linalg.pinv(G) @ np.vstack([Td.reshape(-1, 1), td.reshape(-1, 1)]), inv=True)
-    #     print(f'ud: \n{ud}')
-    #     return ud
-
-    def plan(self, goal_state, current_state):
+    def plan(self, current_state):
         """
         """
         v = current_state[10:13]  # velocity
@@ -399,11 +379,11 @@ class NMPCPlanner:
         G = self.drone_params.G
         I = self.drone_params.inertia_matrix
 
-        # distance = np.linalg.norm(self.waypoints[0, :3] - self.waypoints[-1, :3])
-        # lookahead_distance = distance / len(self.waypoints)        
-        # print(f'lookahead_distance: {lookahead_distance}')
+        distance = np.linalg.norm(self.waypoints[0, :3] - self.waypoints[-1, :3])
+        lookahead_distance = 1.5 * distance / len(self.waypoints)        
+        print(f'lookahead_distance: {lookahead_distance}')
 
-        # goal_state = self._get_current_waypoint(lookahead_distance, current_state)
+        goal_state = self._get_current_waypoint(lookahead_distance, current_state)
         print(f'goal_state: {goal_state}')
         optimal_u = self.mpc_prob_solve(goal_state, current_state)
         print(f'optimal_u: {optimal_u}')
@@ -434,3 +414,42 @@ class NMPCPlanner:
         ud = self._swap_coordinate(np.linalg.pinv(G) @ np.vstack([Td.reshape(-1, 1), td.reshape(-1, 1)]), inv=True)
         print(f'ud: \n{ud}')
         return ud
+
+    # def plan(self, goal_state, current_state):
+    #     """
+    #     """
+    #     v = current_state[10:13]  # velocity
+    #     w = current_state[13:16]
+    #     G = self.drone_params.G
+    #     I = self.drone_params.inertia_matrix
+
+    #     print(f'goal_state: {goal_state}')
+    #     optimal_u = self.mpc_prob_solve(goal_state, current_state)
+    #     print(f'optimal_u: {optimal_u}')
+
+    #     # INDI
+    #     if (self.first_run):
+    #         self.last_w = np.zeros(3)
+    #         self.first_run = False
+
+    #     Td, td = self._get_Gt(G, optimal_u)
+    #     # print(f'Td: \n{Td}')
+    #     # print(f'td: \n{td}')
+    #     # current_u = self._swap_coordinate(self.drone_params.thrust_coefficient*current_state[16:]**2)
+    #     # print(f'current_u: \n{current_u}')
+    #     # _, tauf = self._get_Gt(G, current_u)
+    #     # print(f'tauf: \n{tauf}')
+    #     # w_dotf = (w - self.last_w) / self.config.DTK
+    #     # print(f'w: \n{w}')
+    #     # print(f'last_w: \n{self.last_w}')
+    #     # print(f'w_dotf: \n{w_dotf}')
+    #     # taud = tauf + I @ (np.linalg.inv(I)@(td - np.cross(w, I @ w)) - w_dotf)
+    #     # self.last_w = w
+    #     # print(f'taud: \n{taud}')
+    #     # print(f'T shape: \n{np.array([Td]).shape}')
+    #     # print(f'taud shape: \n{taud.shape}')
+    #     # print(f'Td,taud stack: \n{np.vstack([Td.reshape(-1, 1), taud.reshape(-1, 1)])}')
+    #     # ud = self._swap_coordinate(np.linalg.pinv(G) @ np.vstack([Td.reshape(-1, 1), taud.reshape(-1, 1)]), inv=True)
+    #     ud = self._swap_coordinate(np.linalg.pinv(G) @ np.vstack([Td.reshape(-1, 1), td.reshape(-1, 1)]), inv=True)
+    #     print(f'ud: \n{ud}')
+    #     return ud

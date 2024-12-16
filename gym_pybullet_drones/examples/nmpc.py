@@ -98,7 +98,7 @@ def run(
     print(f'max thrust: {drone_params.max_thrust}')
 
     #### Initialize the trajectory #############################
-    NUM_WAYPOINTS = 50
+    NUM_WAYPOINTS = 2
 
     initial_state = env._getDroneStateVector(0)
     INIT_P = initial_state[0:3]
@@ -151,14 +151,14 @@ def run(
     #### Initialize the controller #############################
 
     # Custom definitions for all matrices
-    Qpk = np.diag([80.0, 80.0, 800.0]) # Higher weights on position error
-    Qxyk = np.array([60.0])  # Orientation cost (xy-plane)
-    Qzk = np.array([60.0]) # Orientation cost (z-axis)
-    Qvk = np.diag([1.0, 1.0, 1.0])  # Velocity cost
-    Qwk = np.diag([0.5, 0.5, 0.1])  # Angular velocity cost
-    Qtk = np.diag([3.0, 3.0, 3.0, 3.0])  # Thrust cost
-    Quk = np.diag([1.0, 1.0, 1.0, 1.0]) # Control input cost
-    Rk = np.diag([1.0, 1.0, 1.0, 1.0])  # Input cost
+    Qpk = np.diag([80.0, 80.0, 800.0])*1e+2 # Higher weights on position error
+    Qxyk = np.array([60.0])*1e+2  # Orientation cost (xy-plane)
+    Qzk = np.array([60.0])*1e+2 # Orientation cost (z-axis)
+    Qvk = np.diag([1.0, 1.0, 1.0])*1e+0  # Velocity cost
+    Qwk = np.diag([0.5, 0.5, 0.1])*1e+0  # Angular velocity cost
+    Qtk = np.diag([3.0, 3.0, 3.0, 3.0])*1e+1  # Thrust cost
+    Quk = np.diag([1.0, 1.0, 1.0, 1.0])*1e+1 # Control input cost
+    Rk = np.diag([1.0, 1.0, 1.0, 1.0])*1e+3  # Input cost
 
     # Create an nmpcConfig instance with custom matrices
     config = nmpcConfig(
@@ -199,7 +199,7 @@ def run(
 
             current_state = obs[j]
             print(f'current state: {current_state}')
-            optimal_u = abs(nmpc_planner.plan(goal_state, current_state))
+            optimal_u = abs(nmpc_planner.plan(current_state))
             rpms = np.sqrt(optimal_u / drone_params.thrust_coefficient)
             print(f'rpms before clipping: {rpms}')
 
