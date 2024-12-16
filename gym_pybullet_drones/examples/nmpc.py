@@ -98,7 +98,7 @@ def run(
     print(f'max thrust: {drone_params.max_thrust}')
 
     #### Initialize the trajectory #############################
-    NUM_WAYPOINTS = 2
+    NUM_WAYPOINTS = 10
 
     initial_state = env._getDroneStateVector(0)
     INIT_P = initial_state[0:3]
@@ -108,7 +108,7 @@ def run(
     # INIT_T = drone_params.thrust_coefficient * initial_state[16:]**2
     INIT_T = np.zeros(4)
 
-    FINAL_P = np.array([0.0, 0.0, 1.0])
+    FINAL_P = np.array([1.0, 0.0, 0.0])
     FINAL_Q = pyQuaternion(np.array([1.0, 0.0, 0.0, 0.0]))
     FINAL_V = np.zeros(3)
     FINAL_W = np.zeros(3)
@@ -207,7 +207,8 @@ def run(
                 action[j, :] = rpms.reshape(1, 4)
 
             # if (i == trigger_time):
-            #     drone_params.G[3, 1] *= 0.0
+            #     drone_params.G[:, 1] *= 0.0
+            #     drone_params.en_rot[1] *= 0.0
 
         #### Go to the next way point #####################
         for j in range(num_drones):

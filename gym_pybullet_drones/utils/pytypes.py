@@ -106,6 +106,15 @@ class DroneParameters(PythonMsg):
                          -self.torque_coefficient, 
                          self.torque_coefficient,
                          self.torque_coefficient]])
+
+        # G = np.array([[1, 1, 1, 1],
+        #                 [-r_y[0], r_y[1], -r_y[2], r_y[3]],
+        #                 [-r_x[0], r_x[1], r_x[2], -r_x[3]],
+        #                 [-self.torque_coefficient, 
+        #                  -self.torque_coefficient, 
+        #                  self.torque_coefficient,
+        #                  self.torque_coefficient]])
+        
         print(f'G matrix: \n{G}')
         return G
 

@@ -9,7 +9,7 @@ from gym_pybullet_drones.utils.pytypes import DroneParameters
 class nmpcConfig:
     NXK: int = 17  # length of state vector: z = [p, q, v, w, t]
     NU: int = 4  # length of input vector: u = = [t1, t2, t3, t4]
-    TK: int = 100  # finite time horizon length
+    TK: int = 20  # finite time horizon length
 
     Rk: list = field(
         default_factory=lambda: np.diag([0.5, 0.5, 0.5, 0.5])
@@ -116,6 +116,14 @@ class NMPCPlanner:
         else:
             # from paper to simulator
             return np.array([vec_4d[3], vec_4d[1], vec_4d[2], vec_4d[0]])
+
+    # def _swap_coordinate(self, vec_4d, inv = False):
+    #     if not inv:
+    #         # from simulator to paper
+    #         return np.array([vec_4d[0], vec_4d[2], vec_4d[1], vec_4d[3]])
+    #     else:
+    #         # from paper to simulator
+    #         return np.array([vec_4d[0], vec_4d[2], vec_4d[1], vec_4d[3]])
         
     def get_cost_vector(self, state, ref_state, control):
         # Extract components of the state
