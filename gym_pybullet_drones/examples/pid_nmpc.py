@@ -45,7 +45,7 @@ DEFAULT_USER_DEBUG_GUI = False
 DEFAULT_OBSTACLES = True
 DEFAULT_SIMULATION_FREQ_HZ = 240
 DEFAULT_CONTROL_FREQ_HZ = 48
-DEFAULT_DURATION_SEC = 15
+DEFAULT_DURATION_SEC = 2
 DEFAULT_OUTPUT_FOLDER = 'results'
 DEFAULT_COLAB = False
 
@@ -91,12 +91,12 @@ def run(
     ]
 
     #### Generate Waypoints with Positions and Orientations ######
-    PERIOD = 10  # Duration over which waypoints are defined
+    PERIOD = 1  # Duration over which waypoints are defined
     NUM_WP = control_freq_hz * PERIOD  # Number of waypoints
 
     # Define final positions and orientations for each drone
-    FINAL_P = np.array([[1.0, 1.0, 1.0] for _ in range(num_drones)])  # Example final positions
-    FINAL_Q = np.array([pyQuaternion(axis=[0, 0, 1], angle=np.pi/2) for _ in range(num_drones)])  # Example final orientations
+    FINAL_P = np.array([[0.0, 0.0, 1.0] for _ in range(num_drones)])  # Example final positions
+    FINAL_Q = np.array([pyQuaternion(axis=[0, 0, 1], angle=0) for _ in range(num_drones)])  # Example final orientations
 
     # Initialize lists to store waypoints for each drone
     positions = [np.linspace(INIT_XYZS[j], FINAL_P[j], NUM_WP) for j in range(num_drones)]
@@ -111,8 +111,8 @@ def run(
     #### Create the environment ################################
     env = CtrlAviary(drone_model=drone,
                         num_drones=num_drones,
-                        initial_xyzs=INIT_XYZS,
-                        initial_rpys=INIT_RPYS,
+                        # initial_xyzs=INIT_XYZS,
+                        # initial_rpys=INIT_RPYS,
                         physics=physics,
                         neighbourhood_radius=10,
                         pyb_freq=simulation_freq_hz,
@@ -127,20 +127,20 @@ def run(
     PYB_CLIENT = env.getPyBulletClient()
 
     # Optionally, visualize waypoints at the start
-    print(f'positions: \n{positions}')
-    waypoint_radius = 2e-3  # Adjust size as needed
-    for j in range(num_drones):
-        for wp in positions[j]:
-            waypoint_visual = p.createVisualShape(
-                shapeType=p.GEOM_SPHERE,
-                radius=waypoint_radius,
-                rgbaColor=colors[j % len(colors)] + [1]
-            )
-            _ = p.createMultiBody(
-                baseMass=0,
-                baseVisualShapeIndex=waypoint_visual,
-                basePosition=wp
-            )
+    # print(f'positions: \n{positions}')
+    # waypoint_radius = 2e-3  # Adjust size as needed
+    # for j in range(num_drones):
+    #     for wp in positions[j]:
+    #         waypoint_visual = p.createVisualShape(
+    #             shapeType=p.GEOM_SPHERE,
+    #             radius=waypoint_radius,
+    #             rgbaColor=colors[j % len(colors)] + [1]
+    #         )
+    #         _ = p.createMultiBody(
+    #             baseMass=0,
+    #             baseVisualShapeIndex=waypoint_visual,
+    #             basePosition=wp
+    #         )
 
     #### Initialize the logger #################################
     logger = Logger(logging_freq_hz=control_freq_hz,
