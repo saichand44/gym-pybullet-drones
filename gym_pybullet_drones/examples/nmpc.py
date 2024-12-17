@@ -29,7 +29,7 @@ DEFAULT_USER_DEBUG_GUI = False
 DEFAULT_OBSTACLES = False
 DEFAULT_SIMULATION_FREQ_HZ = 240
 DEFAULT_CONTROL_FREQ_HZ = 120 #48
-DEFAULT_DURATION_SEC = 1.0#0.5
+DEFAULT_DURATION_SEC = 2.0#0.5
 DEFAULT_OUTPUT_FOLDER = 'results'
 DEFAULT_COLAB = False
 
@@ -98,7 +98,7 @@ def run(
     print(f'max thrust: {drone_params.max_thrust}')
 
     #### Initialize the trajectory #############################
-    NUM_WAYPOINTS = 10
+    NUM_WAYPOINTS = 25
 
     initial_state = env._getDroneStateVector(0)
     INIT_P = initial_state[0:3]
@@ -108,7 +108,7 @@ def run(
     # INIT_T = drone_params.thrust_coefficient * initial_state[16:]**2
     INIT_T = np.zeros(4)
 
-    FINAL_P = np.array([1.0, 0.0, 0.0])
+    FINAL_P = np.array([0.0, 0.0, 1.0])
     FINAL_Q = pyQuaternion(np.array([1.0, 0.0, 0.0, 0.0]))
     FINAL_V = np.zeros(3)
     FINAL_W = np.zeros(3)
@@ -151,18 +151,27 @@ def run(
     #### Initialize the controller #############################
 
     # Custom definitions for all matrices
-    Qpk = np.diag([80.0, 80.0, 800.0])*1e+2 # Higher weights on position error
-    Qxyk = np.array([60.0])*1e+2  # Orientation cost (xy-plane)
+    # Qpk = np.diag([800.0, 800.0, 800.0])*1e+4 # Higher weights on position error
+    # Qxyk = np.array([60.0])*1e+4  # Orientation cost (xy-plane)
+    # Qzk = np.array([60.0])*1e+2 # Orientation cost (z-axis)
+    # Qvk = np.diag([1.0, 1.0, 1.0])*1e+1  # Velocity cost
+    # Qwk = np.diag([0.5, 0.5, 0.1])*1e+1  # Angular velocity cost
+    # Qtk = np.diag([3.0, 3.0, 3.0, 3.0])*1e+3  # Thrust cost
+    # Quk = np.diag([1.0, 1.0, 1.0, 1.0])*1e+3 # Control input cost
+    # Rk = np.diag([1.0, 1.0, 1.0, 1.0])*1e+3  # Input cost
+
+    Qpk = np.diag([800.0, 800.0, 800.0])*1e+6 # Higher weights on position error
+    Qxyk = np.array([60.0])*1e+4  # Orientation cost (xy-plane)
     Qzk = np.array([60.0])*1e+2 # Orientation cost (z-axis)
-    Qvk = np.diag([1.0, 1.0, 1.0])*1e+0  # Velocity cost
-    Qwk = np.diag([0.5, 0.5, 0.1])*1e+0  # Angular velocity cost
-    Qtk = np.diag([3.0, 3.0, 3.0, 3.0])*1e+1  # Thrust cost
-    Quk = np.diag([1.0, 1.0, 1.0, 1.0])*1e+1 # Control input cost
+    Qvk = np.diag([1.0, 1.0, 1.0])*1e+2  # Velocity cost
+    Qwk = np.diag([0.5, 0.5, 0.1])*1e+2  # Angular velocity cost
+    Qtk = np.diag([3.0, 3.0, 3.0, 3.0])*1e+5  # Thrust cost
+    Quk = np.diag([1.0, 1.0, 1.0, 1.0])*1e+5 # Control input cost
     Rk = np.diag([1.0, 1.0, 1.0, 1.0])*1e+3  # Input cost
 
     # Create an nmpcConfig instance with custom matrices
     config = nmpcConfig(
-        TK=40,
+        TK=40,#40,
         Qpk=Qpk,
         Qxyk=Qxyk,
         Qzk=Qzk,
@@ -171,7 +180,7 @@ def run(
         Qtk=Qtk,
         Quk=Quk,
         Rk=Rk,
-        DTK=0.05  # Custom time step
+        DTK=1e-3#0.05  # Custom time step
     )
     nmpc_planner = NMPCPlanner(config=config,
                                drone_params=drone_params,
@@ -192,10 +201,6 @@ def run(
 
         # #### Compute control using NMPC ###########################
         for j in range(num_drones):
-            if wp_counters[j] < NUM_WAYPOINTS:
-                goal_state = waypoints[wp_counters[j]]
-            else:
-                goal_state = waypoints[-1]
 
             current_state = obs[j]
             print(f'current state: {current_state}')
@@ -209,11 +214,7 @@ def run(
             # if (i == trigger_time):
             #     drone_params.G[:, 1] *= 0.0
             #     drone_params.en_rot[1] *= 0.0
-
-        #### Go to the next way point #####################
-        for j in range(num_drones):
-            if wp_counters[j] < NUM_WAYPOINTS -1:
-                wp_counters[j] += 1  # Move to the next waypoint
+            #     config.Qzk *= 0.
 
         #### Log the simulation ####################################
         for j in range(num_drones):

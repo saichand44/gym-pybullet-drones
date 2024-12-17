@@ -67,26 +67,6 @@ class NMPCPlanner:
         tau = Gt[1:]
         return T, tau
 
-    # def _get_current_waypoint(self, lookahead_distance, current_state):
-    #     waypoints = np.array(self.waypoints)
-
-    #     if waypoints.ndim == 1:
-    #         return waypoints
-    #     elif waypoints.ndim == 2:
-    #         curr_position = current_state[:3]
-    #         curr_heading = current_state[10:13]
-    #         for _, wp in enumerate(waypoints):
-    #             vector_to_wp = wp[:3] - curr_position
-    #             distance = np.linalg.norm(vector_to_wp)
-    #             if distance > lookahead_distance:
-    #                 dot_product = np.dot(curr_heading, vector_to_wp)
-    #                 if dot_product > 0:
-    #                     return wp
-    #         return waypoints[-1]
-    #     else:
-    #         raise ValueError("Waypoints array must be either 1D (single waypoint) \
-    #                          or 2D (multiple waypoints).")
-
     def _get_current_waypoint(self, lookahead_distance, current_state):
         waypoints = np.array(self.waypoints)
 
@@ -116,14 +96,6 @@ class NMPCPlanner:
         else:
             # from paper to simulator
             return np.array([vec_4d[3], vec_4d[1], vec_4d[2], vec_4d[0]])
-
-    # def _swap_coordinate(self, vec_4d, inv = False):
-    #     if not inv:
-    #         # from simulator to paper
-    #         return np.array([vec_4d[0], vec_4d[2], vec_4d[1], vec_4d[3]])
-    #     else:
-    #         # from paper to simulator
-    #         return np.array([vec_4d[0], vec_4d[2], vec_4d[1], vec_4d[3]])
         
     def get_cost_vector(self, state, ref_state, control):
         # Extract components of the state
@@ -303,23 +275,14 @@ class NMPCPlanner:
         lbx = -ca.inf * ca.DM.ones((N, 1))
         ubx = ca.inf * ca.DM.ones((N, 1))
 
-        # lbx[n_states*(self.config.TK+1)+0::n_controls]         = 0
-        # lbx[n_states*(self.config.TK+1)+1::n_controls]         = 0 
-        # lbx[n_states*(self.config.TK+1)+2::n_controls]         = 0
-        # lbx[n_states*(self.config.TK+1)+3::n_controls]         = 0 
-        # ubx[n_states*(self.config.TK+1)+0::n_controls]         = self.drone_params.max_thrust/4 
-        # ubx[n_states*(self.config.TK+1)+1::n_controls]         = self.drone_params.max_thrust/4 
-        # ubx[n_states*(self.config.TK+1)+2::n_controls]         = self.drone_params.max_thrust/4 
-        # ubx[n_states*(self.config.TK+1)+3::n_controls]         = self.drone_params.max_thrust/4 
-
         lbx[n_states*(self.config.TK+1)+0::n_controls]         = 0.0
         lbx[n_states*(self.config.TK+1)+1::n_controls]         = 0.0
         lbx[n_states*(self.config.TK+1)+2::n_controls]         = 0.0
         lbx[n_states*(self.config.TK+1)+3::n_controls]         = 0.0
-        ubx[n_states*(self.config.TK+1)+0::n_controls]         = self.drone_params.max_thrust * self.drone_params.en_rot[0]/4 
-        ubx[n_states*(self.config.TK+1)+1::n_controls]         = self.drone_params.max_thrust * self.drone_params.en_rot[1]/4 
-        ubx[n_states*(self.config.TK+1)+2::n_controls]         = self.drone_params.max_thrust * self.drone_params.en_rot[2]/4 
-        ubx[n_states*(self.config.TK+1)+3::n_controls]         = self.drone_params.max_thrust * self.drone_params.en_rot[3]/4 
+        ubx[n_states*(self.config.TK+1)+0::n_controls]         = self.drone_params.max_thrust * self.drone_params.en_rot[0] 
+        ubx[n_states*(self.config.TK+1)+1::n_controls]         = self.drone_params.max_thrust * self.drone_params.en_rot[1]
+        ubx[n_states*(self.config.TK+1)+2::n_controls]         = self.drone_params.max_thrust * self.drone_params.en_rot[2] 
+        ubx[n_states*(self.config.TK+1)+3::n_controls]         = self.drone_params.max_thrust * self.drone_params.en_rot[3] 
 
         # lbg is all zeros
         lbg = ca.vertcat(
@@ -422,42 +385,3 @@ class NMPCPlanner:
         ud = self._swap_coordinate(np.linalg.pinv(G) @ np.vstack([Td.reshape(-1, 1), td.reshape(-1, 1)]), inv=True)
         print(f'ud: \n{ud}')
         return ud
-
-    # def plan(self, goal_state, current_state):
-    #     """
-    #     """
-    #     v = current_state[10:13]  # velocity
-    #     w = current_state[13:16]
-    #     G = self.drone_params.G
-    #     I = self.drone_params.inertia_matrix
-
-    #     print(f'goal_state: {goal_state}')
-    #     optimal_u = self.mpc_prob_solve(goal_state, current_state)
-    #     print(f'optimal_u: {optimal_u}')
-
-    #     # INDI
-    #     if (self.first_run):
-    #         self.last_w = np.zeros(3)
-    #         self.first_run = False
-
-    #     Td, td = self._get_Gt(G, optimal_u)
-    #     # print(f'Td: \n{Td}')
-    #     # print(f'td: \n{td}')
-    #     # current_u = self._swap_coordinate(self.drone_params.thrust_coefficient*current_state[16:]**2)
-    #     # print(f'current_u: \n{current_u}')
-    #     # _, tauf = self._get_Gt(G, current_u)
-    #     # print(f'tauf: \n{tauf}')
-    #     # w_dotf = (w - self.last_w) / self.config.DTK
-    #     # print(f'w: \n{w}')
-    #     # print(f'last_w: \n{self.last_w}')
-    #     # print(f'w_dotf: \n{w_dotf}')
-    #     # taud = tauf + I @ (np.linalg.inv(I)@(td - np.cross(w, I @ w)) - w_dotf)
-    #     # self.last_w = w
-    #     # print(f'taud: \n{taud}')
-    #     # print(f'T shape: \n{np.array([Td]).shape}')
-    #     # print(f'taud shape: \n{taud.shape}')
-    #     # print(f'Td,taud stack: \n{np.vstack([Td.reshape(-1, 1), taud.reshape(-1, 1)])}')
-    #     # ud = self._swap_coordinate(np.linalg.pinv(G) @ np.vstack([Td.reshape(-1, 1), taud.reshape(-1, 1)]), inv=True)
-    #     ud = self._swap_coordinate(np.linalg.pinv(G) @ np.vstack([Td.reshape(-1, 1), td.reshape(-1, 1)]), inv=True)
-    #     print(f'ud: \n{ud}')
-    #     return ud
